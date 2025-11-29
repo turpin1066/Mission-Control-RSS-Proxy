@@ -3,38 +3,46 @@ import requests
 
 app = Flask(__name__)
 
-@app.after_request
-def add_cors_headers(resp):
-    # Allow your Mission Control site (or * if you prefer)
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
-    return resp
 
-@app.route("/rss", methods=["GET", "OPTIONS"])
+@app.route("/")
+def root():
+    # Simple health check
+    return "Mission Control RSS Proxy OK", 200
+
+
+@app.route("/rss")
 def rss_proxy():
-    # Handle CORS preflight if browser sends OPTIONS
-    if request.method == "OPTIONS":
-        return Response(status=204)
-
-    url = request.args.get("url")
-    if not url:
-        return Response("Missing url parameter", status=400)
+    target_url = request.args.get("url")
+    if not target_url:
+        return Response("Missing 'url' query parameter", status=400)
 
     try:
-        upstream = requests.get(
-            url,
-            headers={"User-Agent": "MissionControlRSS/1.0"},
-            timeout=10,
-        )
-    except requests.RequestException as e:
-        return Response(f"Upstream error: {e}", status=502)
+        # Fetch the RSS feed
+        upstream = requests.get(target_url, timeout=10)
+    except requests.RequestException as exc:
+        return Response(f"Upstream fetch error: {exc}", status=502)
 
-    # Pass through content; CORS headers are added in add_cors_headers()
-    content_type = upstream.headers.get("Content-Type", "application/xml")
-    return Response(upstream.content, status=upstream.status_code,
-                    headers={"Content-Type": content_type})
+    # Pass through the body, but make sure content-type + CORS are good
+    content_type = upstream.headers.get("Content-Type", "application/xml; charset=utf-8")
+
+    resp = Response(
+        upstream.content,
+        status=upstream.status_code,
+        content_type=content_type,
+    )
+
+    # Allow your PWA to call this from any origin
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Headers"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+
+    return resp
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    # Local dev: python server.py
+    # Render will use gunicorn (see start command below), not this.
+    import os
+
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port)
